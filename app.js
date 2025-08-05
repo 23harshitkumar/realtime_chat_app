@@ -1,4 +1,4 @@
-// ChatFlow Application - JavaScript
+// ChatFlow Application - JavaScript with SPA Routing (Completely Fixed)
 class ChatApp {
     constructor() {
         this.currentUser = null;
@@ -8,18 +8,35 @@ class ChatApp {
         this.users = [];
         this.typingUsers = new Set();
         this.socketSimulation = null;
+        this.currentPage = 'auth';
+        this.initialized = false;
         
         console.log('ChatApp initializing...');
+        
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.initialize());
+        } else {
+            this.initialize();
+        }
+    }
+
+    initialize() {
+        if (this.initialized) return;
+        this.initialized = true;
+        
+        console.log('Starting app initialization...');
         this.initializeData();
-        this.setupEventListeners();
         this.checkAuthentication();
+        this.setupEventListeners();
+        this.setupRouting();
+        console.log('App initialization complete');
     }
 
     // Initialize sample data
     initializeData() {
         console.log('Initializing data...');
         
-        // Always use fresh sample data for demo purposes
         this.users = [
             {"id": "1", "username": "john_doe", "email": "john@example.com", "avatar": "JD"},
             {"id": "2", "username": "jane_smith", "email": "jane@example.com", "avatar": "JS"},
@@ -34,7 +51,9 @@ class ChatApp {
                 "participants": ["1", "2", "3"], 
                 "createdBy": "1",
                 "createdAt": "2025-01-15T10:00:00Z",
-                "link": "/room/room_1"
+                "link": "/room/room_1",
+                "lastActivity": "2025-01-15T12:30:00Z",
+                "messageCount": 15
             },
             {
                 "id": "room_2", 
@@ -42,7 +61,9 @@ class ChatApp {
                 "participants": ["1", "4"], 
                 "createdBy": "4",
                 "createdAt": "2025-01-15T14:30:00Z",
-                "link": "/room/room_2"
+                "link": "/room/room_2",
+                "lastActivity": "2025-01-15T15:45:00Z",
+                "messageCount": 8
             },
             {
                 "id": "room_3", 
@@ -50,7 +71,9 @@ class ChatApp {
                 "participants": ["2", "3", "4"], 
                 "createdBy": "2",
                 "createdAt": "2025-01-15T16:45:00Z",
-                "link": "/room/room_3"
+                "link": "/room/room_3",
+                "lastActivity": "2025-01-15T17:20:00Z",
+                "messageCount": 23
             }
         ];
 
@@ -105,112 +128,238 @@ class ChatApp {
         console.log('Data initialized with', this.users.length, 'users and', this.rooms.length, 'rooms');
     }
 
-    // Setup event listeners
+    // Setup event listeners with improved error handling
     setupEventListeners() {
         console.log('Setting up event listeners...');
         
-        // Auth forms
-        const loginForm = document.getElementById('login-form');
-        const registerForm = document.getElementById('register-form');
-        
-        if (loginForm) {
-            loginForm.addEventListener('submit', (e) => {
+        // Auth tabs - using event delegation for reliability
+        document.addEventListener('click', (e) => {
+            if (e.target.id === 'login-tab') {
                 e.preventDefault();
-                this.handleLogin();
-            });
-        }
-        
-        if (registerForm) {
-            registerForm.addEventListener('submit', (e) => {
+                console.log('Login tab clicked via delegation');
+                this.switchAuthTab('login');
+            } else if (e.target.id === 'register-tab') {
                 e.preventDefault();
-                this.handleRegister();
-            });
-        }
-
-        // Auth tabs
-        const loginTab = document.getElementById('login-tab');
-        const registerTab = document.getElementById('register-tab');
-        
-        if (loginTab) loginTab.addEventListener('click', () => this.switchAuthTab('login'));
-        if (registerTab) registerTab.addEventListener('click', () => this.switchAuthTab('register'));
-
-        // Dashboard
-        const logoutBtn = document.getElementById('logout-btn');
-        const createRoomBtn = document.getElementById('create-room-btn');
-        
-        if (logoutBtn) logoutBtn.addEventListener('click', () => this.handleLogout());
-        if (createRoomBtn) createRoomBtn.addEventListener('click', () => this.showCreateRoomModal());
-
-        // Chat
-        const backBtn = document.getElementById('back-to-dashboard');
-        const sendBtn = document.getElementById('send-btn');
-        const messageInput = document.getElementById('message-input');
-        const copyLinkBtn = document.getElementById('copy-link-btn');
-        
-        if (backBtn) backBtn.addEventListener('click', () => this.showDashboard());
-        if (sendBtn) sendBtn.addEventListener('click', () => this.sendMessage());
-        if (copyLinkBtn) copyLinkBtn.addEventListener('click', () => this.copyRoomLink());
-        
-        if (messageInput) {
-            messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    this.sendMessage();
-                } else {
-                    this.handleTyping();
+                console.log('Register tab clicked via delegation');
+                this.switchAuthTab('register');
+            } else if (e.target.id === 'logout-btn') {
+                e.preventDefault();
+                this.handleLogout();
+            } else if (e.target.id === 'create-room-btn') {
+                e.preventDefault();
+                this.showCreateRoomModal();
+            } else if (e.target.id === 'back-to-dashboard') {
+                e.preventDefault();
+                this.navigateToDashboard();
+            } else if (e.target.id === 'send-btn') {
+                e.preventDefault();
+                this.sendMessage();
+            } else if (e.target.id === 'copy-link-btn') {
+                e.preventDefault();
+                this.copyRoomLink();
+            } else if (e.target.id === 'close-modal') {
+                e.preventDefault();
+                this.hideCreateRoomModal();
+            } else if (e.target.id === 'cancel-room') {
+                e.preventDefault();
+                this.hideCreateRoomModal();
+            } else if (e.target.classList.contains('room-card')) {
+                const roomId = e.target.getAttribute('data-room-id');
+                if (roomId) {
+                    this.joinRoom(roomId);
                 }
-            });
-        }
+            }
+        });
 
-        // Modal
-        const closeModal = document.getElementById('close-modal');
-        const cancelRoom = document.getElementById('cancel-room');
-        const createRoomForm = document.getElementById('create-room-form');
-        const modal = document.getElementById('create-room-modal');
-        
-        if (closeModal) closeModal.addEventListener('click', () => this.hideCreateRoomModal());
-        if (cancelRoom) cancelRoom.addEventListener('click', () => this.hideCreateRoomModal());
-        if (createRoomForm) {
-            createRoomForm.addEventListener('submit', (e) => {
+        // Form submissions
+        document.addEventListener('submit', (e) => {
+            if (e.target.id === 'login-form') {
+                e.preventDefault();
+                console.log('Login form submitted via delegation');
+                this.handleLogin();
+            } else if (e.target.id === 'register-form') {
+                e.preventDefault();
+                console.log('Register form submitted via delegation');
+                this.handleRegister();
+            } else if (e.target.id === 'create-room-form') {
                 e.preventDefault();
                 this.handleCreateRoom();
-            });
-        }
+            }
+        });
+
+        // Message input
+        document.addEventListener('keypress', (e) => {
+            if (e.target.id === 'message-input' && e.key === 'Enter') {
+                e.preventDefault();
+                this.sendMessage();
+            } else if (e.target.id === 'message-input') {
+                this.handleTyping();
+            }
+        });
+
+        // Modal backdrop clicks
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal-backdrop') || e.target.id === 'create-room-modal') {
+                this.hideCreateRoomModal();
+            }
+        });
         
-        if (modal) {
-            modal.addEventListener('click', (e) => {
-                if (e.target.classList.contains('modal-backdrop') || e.target.id === 'create-room-modal') {
-                    this.hideCreateRoomModal();
-                }
-            });
-        }
+        console.log('Event listeners set up successfully using delegation');
+    }
+
+    // Setup routing system
+    setupRouting() {
+        console.log('Setting up routing...');
         
-        console.log('Event listeners set up successfully');
+        // Handle browser navigation
+        window.addEventListener('popstate', () => {
+            this.handleRouteChange();
+        });
+        
+        // Handle initial route
+        this.handleRouteChange();
+    }
+
+    // Handle route changes
+    handleRouteChange() {
+        const hash = window.location.hash;
+        console.log('Route change:', hash);
+        
+        if (hash.startsWith('#chat/')) {
+            const roomId = hash.replace('#chat/', '');
+            if (this.currentUser) {
+                this.navigateToChat(roomId);
+            } else {
+                this.navigateToAuth();
+            }
+        } else if (hash === '#dashboard') {
+            if (this.currentUser) {
+                this.navigateToPage('dashboard');
+            } else {
+                this.navigateToAuth();
+            }
+        } else if (hash === '#login' || hash === '#register') {
+            this.navigateToAuth();
+        } else {
+            // Default route based on auth status
+            if (this.currentUser) {
+                this.navigateToPage('dashboard');
+            } else {
+                this.navigateToAuth();
+            }
+        }
+    }
+
+    // Navigate to a specific page
+    navigateToPage(pageName, updateUrl = true) {
+        console.log('Navigating to page:', pageName);
+        
+        if (this.currentPage === pageName) {
+            console.log('Already on page:', pageName);
+            return;
+        }
+
+        // Hide all pages first
+        const allPages = document.querySelectorAll('.page');
+        allPages.forEach(page => {
+            page.classList.remove('active');
+        });
+
+        const targetPageEl = document.getElementById(`${pageName}-page`);
+        if (!targetPageEl) {
+            console.error('Target page not found:', pageName);
+            return;
+        }
+
+        // Update URL
+        if (updateUrl) {
+            const urlMap = {
+                'auth': '#login',
+                'dashboard': '#dashboard',
+                'chat': `#chat/${this.currentRoom ? this.currentRoom.id : ''}`
+            };
+            
+            if (urlMap[pageName]) {
+                window.history.pushState(null, null, urlMap[pageName]);
+            }
+        }
+
+        // Show target page with transition
+        setTimeout(() => {
+            targetPageEl.classList.add('active');
+            this.currentPage = pageName;
+            
+            // Page-specific initialization
+            this.onPageEnter(pageName);
+        }, 50);
+    }
+
+    // Handle page enter events
+    onPageEnter(pageName) {
+        console.log('Entered page:', pageName);
+        
+        switch (pageName) {
+            case 'auth':
+                setTimeout(() => {
+                    const emailInput = document.getElementById('login-email');
+                    if (emailInput) emailInput.focus();
+                }, 200);
+                break;
+                
+            case 'dashboard':
+                this.updateUserInfo();
+                this.renderRooms();
+                break;
+                
+            case 'chat':
+                this.updateChatHeader();
+                this.renderParticipants();
+                this.renderMessages();
+                this.startSocketSimulation();
+                setTimeout(() => {
+                    const messageInput = document.getElementById('message-input');
+                    if (messageInput) messageInput.focus();
+                }, 200);
+                break;
+        }
+    }
+
+    // Navigate to auth page
+    navigateToAuth() {
+        this.navigateToPage('auth');
+    }
+
+    // Navigate to dashboard
+    navigateToDashboard() {
+        this.navigateToPage('dashboard');
+    }
+
+    // Navigate to chat
+    navigateToChat(roomId) {
+        const room = this.rooms.find(r => r.id === roomId);
+        if (!room) {
+            console.error('Room not found:', roomId);
+            this.navigateToDashboard();
+            return;
+        }
+
+        if (!room.participants.includes(this.currentUser.id)) {
+            room.participants.push(this.currentUser.id);
+        }
+
+        this.currentRoom = room;
+        this.navigateToPage('chat');
     }
 
     // Check authentication status
     checkAuthentication() {
         console.log('Checking authentication...');
-        const token = localStorage.getItem('chatapp_token');
-        const userData = localStorage.getItem('chatapp_user');
-        
-        if (token && userData) {
-            try {
-                this.currentUser = JSON.parse(userData);
-                console.log('User authenticated:', this.currentUser.username);
-                this.showDashboard();
-            } catch (error) {
-                console.error('Error parsing user data:', error);
-                localStorage.removeItem('chatapp_token');
-                localStorage.removeItem('chatapp_user');
-                this.showAuthPage();
-            }
-        } else {
-            console.log('No authentication found, showing auth page');
-            this.showAuthPage();
-        }
+        // For demo purposes, don't auto-login
+        this.currentUser = null;
+        console.log('Starting with no authentication');
     }
 
-    // Switch auth tabs
+    // Switch auth tabs - Completely fixed
     switchAuthTab(tab) {
         console.log('Switching to', tab, 'tab');
         
@@ -219,20 +368,43 @@ class ChatApp {
         const loginForm = document.getElementById('login-form');
         const registerForm = document.getElementById('register-form');
 
+        if (!loginTab || !registerTab || !loginForm || !registerForm) {
+            console.error('Auth tab elements not found');
+            return;
+        }
+
+        // Remove active class from both tabs
+        loginTab.classList.remove('active');
+        registerTab.classList.remove('active');
+        
+        // Hide both forms
+        loginForm.classList.add('hidden');
+        registerForm.classList.add('hidden');
+
         if (tab === 'login') {
             loginTab.classList.add('active');
-            registerTab.classList.remove('active');
             loginForm.classList.remove('hidden');
-            registerForm.classList.add('hidden');
-        } else {
+            window.history.replaceState(null, null, '#login');
+            
+            setTimeout(() => {
+                const emailInput = document.getElementById('login-email');
+                if (emailInput) emailInput.focus();
+            }, 100);
+        } else if (tab === 'register') {
             registerTab.classList.add('active');
-            loginTab.classList.remove('active');
             registerForm.classList.remove('hidden');
-            loginForm.classList.add('hidden');
+            window.history.replaceState(null, null, '#register');
+            
+            setTimeout(() => {
+                const usernameInput = document.getElementById('register-username');
+                if (usernameInput) usernameInput.focus();
+            }, 100);
         }
+        
+        console.log('Tab switched successfully to:', tab);
     }
 
-    // Handle login
+    // Handle login - Completely fixed
     async handleLogin() {
         console.log('Handling login...');
         
@@ -246,7 +418,7 @@ class ChatApp {
         }
         
         const email = emailInput.value.trim();
-        const password = passwordInput.value;
+        const password = passwordInput.value.trim();
 
         console.log('Login attempt for email:', email);
 
@@ -255,25 +427,19 @@ class ChatApp {
             return;
         }
 
+        // Show loading
         this.showLoading();
 
         try {
             // Simulate API delay
-            await this.delay(500);
+            await this.delay(1000);
 
-            // Find user
             const user = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-            console.log('User found:', user ? user.username : 'none');
+            console.log('User lookup result:', user ? user.username : 'not found');
             
             if (user) {
-                // Successful login
                 this.currentUser = user;
-                const token = this.generateToken(user);
-                
-                localStorage.setItem('chatapp_token', token);
-                localStorage.setItem('chatapp_user', JSON.stringify(user));
-                
-                console.log('Login successful, user stored:', this.currentUser.username);
+                console.log('Login successful for:', this.currentUser.username);
                 
                 this.hideLoading();
                 this.showToast('Welcome back, ' + user.username + '!', 'success');
@@ -282,11 +448,10 @@ class ChatApp {
                 emailInput.value = '';
                 passwordInput.value = '';
                 
-                // Navigate to dashboard
+                // Navigate to dashboard after a short delay
                 setTimeout(() => {
-                    console.log('Navigating to dashboard...');
-                    this.showDashboard();
-                }, 500);
+                    this.navigateToDashboard();
+                }, 800);
                 
             } else {
                 this.hideLoading();
@@ -299,7 +464,7 @@ class ChatApp {
         }
     }
 
-    // Handle registration
+    // Handle registration - Completely fixed
     async handleRegister() {
         console.log('Handling registration...');
         
@@ -315,14 +480,13 @@ class ChatApp {
         
         const username = usernameInput.value.trim();
         const email = emailInput.value.trim();
-        const password = passwordInput.value;
+        const password = passwordInput.value.trim();
 
         if (!username || !email || !password) {
             this.showToast('Please fill in all fields', 'error');
             return;
         }
 
-        // Basic email validation
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             this.showToast('Please enter a valid email address', 'error');
@@ -332,9 +496,8 @@ class ChatApp {
         this.showLoading();
 
         try {
-            await this.delay(500);
+            await this.delay(1000);
 
-            // Check if user already exists
             const existingUser = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
             if (existingUser) {
                 this.hideLoading();
@@ -342,7 +505,6 @@ class ChatApp {
                 return;
             }
 
-            // Create new user
             const newUser = {
                 id: Date.now().toString(),
                 username: username,
@@ -352,10 +514,6 @@ class ChatApp {
 
             this.users.push(newUser);
             this.currentUser = newUser;
-            
-            const token = this.generateToken(newUser);
-            localStorage.setItem('chatapp_token', token);
-            localStorage.setItem('chatapp_user', JSON.stringify(newUser));
             
             console.log('Registration successful:', newUser.username);
             
@@ -368,8 +526,8 @@ class ChatApp {
             passwordInput.value = '';
             
             setTimeout(() => {
-                this.showDashboard();
-            }, 500);
+                this.navigateToDashboard();
+            }, 800);
             
         } catch (error) {
             console.error('Registration error:', error);
@@ -378,21 +536,10 @@ class ChatApp {
         }
     }
 
-    // Generate token
-    generateToken(user) {
-        return btoa(JSON.stringify({ 
-            userId: user.id, 
-            username: user.username,
-            exp: Date.now() + 24 * 60 * 60 * 1000 
-        }));
-    }
-
     // Handle logout
     handleLogout() {
         console.log('Logging out...');
         
-        localStorage.removeItem('chatapp_token');
-        localStorage.removeItem('chatapp_user');
         this.currentUser = null;
         this.currentRoom = null;
         
@@ -401,67 +548,8 @@ class ChatApp {
             this.socketSimulation = null;
         }
         
-        this.showAuthPage();
+        this.navigateToAuth();
         this.showToast('Logged out successfully!', 'info');
-    }
-
-    // Show auth page
-    showAuthPage() {
-        console.log('Showing auth page...');
-        this.hideAllPages();
-        document.getElementById('auth-page').classList.remove('hidden');
-    }
-
-    // Show dashboard
-    showDashboard() {
-        console.log('Showing dashboard...');
-        
-        if (!this.currentUser) {
-            console.log('No current user, redirecting to auth');
-            this.showAuthPage();
-            return;
-        }
-
-        this.hideAllPages();
-        document.getElementById('dashboard-page').classList.remove('hidden');
-        
-        this.updateUserInfo();
-        this.renderRooms();
-        
-        console.log('Dashboard displayed for user:', this.currentUser.username);
-    }
-
-    // Show chat page
-    showChatPage() {
-        console.log('Showing chat page...');
-        
-        if (!this.currentUser || !this.currentRoom) {
-            console.log('Missing user or room, redirecting to dashboard');
-            this.showDashboard();
-            return;
-        }
-
-        this.hideAllPages();
-        document.getElementById('chat-page').classList.remove('hidden');
-        
-        this.updateChatHeader();
-        this.renderParticipants();
-        this.renderMessages();
-        this.startSocketSimulation();
-        
-        setTimeout(() => {
-            const messageInput = document.getElementById('message-input');
-            if (messageInput) messageInput.focus();
-        }, 100);
-        
-        console.log('Chat page displayed for room:', this.currentRoom.name);
-    }
-
-    // Hide all pages
-    hideAllPages() {
-        document.getElementById('auth-page').classList.add('hidden');
-        document.getElementById('dashboard-page').classList.add('hidden');
-        document.getElementById('chat-page').classList.add('hidden');
     }
 
     // Update user info
@@ -505,15 +593,21 @@ class ChatApp {
         roomsList.innerHTML = userRooms.map(room => {
             const participantCount = room.participants.length;
             const createdDate = new Date(room.createdAt).toLocaleDateString();
+            const messageCount = room.messageCount || 0;
             
             return `
-                <div class="room-card" onclick="chatApp.joinRoom('${room.id}')">
-                    <h3>${room.name}</h3>
+                <div class="room-card" data-room-id="${room.id}">
+                    <h3>${this.escapeHtml(room.name)}</h3>
                     <div class="room-meta">
                         <span class="participants-count">
                             👥 ${participantCount} participants
                         </span>
-                        <span>${createdDate}</span>
+                        <span>${messageCount} messages</span>
+                    </div>
+                    <div class="room-meta" style="margin-top: 8px;">
+                        <span style="font-size: 11px; color: var(--color-text-secondary);">
+                            Created ${createdDate}
+                        </span>
                     </div>
                 </div>
             `;
@@ -525,36 +619,29 @@ class ChatApp {
     // Join room
     joinRoom(roomId) {
         console.log('Joining room:', roomId);
-        
-        const room = this.rooms.find(r => r.id === roomId);
-        if (!room) {
-            this.showToast('Room not found', 'error');
-            return;
-        }
-
-        // Add user to participants if not already there
-        if (!room.participants.includes(this.currentUser.id)) {
-            room.participants.push(this.currentUser.id);
-        }
-
-        this.currentRoom = room;
-        this.showChatPage();
+        this.navigateToChat(roomId);
     }
 
     // Show create room modal
     showCreateRoomModal() {
         console.log('Showing create room modal...');
-        document.getElementById('create-room-modal').classList.remove('hidden');
-        setTimeout(() => {
-            const roomNameInput = document.getElementById('room-name-input');
-            if (roomNameInput) roomNameInput.focus();
-        }, 100);
+        const modal = document.getElementById('create-room-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                const roomNameInput = document.getElementById('room-name-input');
+                if (roomNameInput) roomNameInput.focus();
+            }, 100);
+        }
     }
 
     // Hide create room modal
     hideCreateRoomModal() {
         console.log('Hiding create room modal...');
-        document.getElementById('create-room-modal').classList.add('hidden');
+        const modal = document.getElementById('create-room-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
         const form = document.getElementById('create-room-form');
         if (form) form.reset();
     }
@@ -579,7 +666,7 @@ class ChatApp {
         this.showLoading();
         
         try {
-            await this.delay(300);
+            await this.delay(500);
 
             const newRoom = {
                 id: `room_${Date.now()}`,
@@ -587,7 +674,9 @@ class ChatApp {
                 participants: [this.currentUser.id],
                 createdBy: this.currentUser.id,
                 createdAt: new Date().toISOString(),
-                link: `/room/room_${Date.now()}`
+                link: `/room/room_${Date.now()}`,
+                lastActivity: new Date().toISOString(),
+                messageCount: 0
             };
 
             this.rooms.push(newRoom);
@@ -611,14 +700,18 @@ class ChatApp {
         const roomNameEl = document.getElementById('room-name');
         const roomLinkEl = document.getElementById('room-link-input');
         
-        if (roomNameEl) roomNameEl.textContent = this.currentRoom.name;
-        if (roomLinkEl) roomLinkEl.value = window.location.origin + this.currentRoom.link;
+        if (roomNameEl && this.currentRoom) {
+            roomNameEl.textContent = this.currentRoom.name;
+        }
+        if (roomLinkEl && this.currentRoom) {
+            roomLinkEl.value = window.location.origin + this.currentRoom.link;
+        }
     }
 
     // Render participants
     renderParticipants() {
         const participantsList = document.getElementById('participants-list');
-        if (!participantsList) return;
+        if (!participantsList || !this.currentRoom) return;
         
         const participants = this.currentRoom.participants.map(userId => {
             return this.users.find(u => u.id === userId);
@@ -627,7 +720,7 @@ class ChatApp {
         participantsList.innerHTML = participants.map(user => `
             <div class="participant">
                 <div class="participant-avatar">${user.avatar}</div>
-                <span class="participant-name">${user.username}</span>
+                <span class="participant-name">${this.escapeHtml(user.username)}</span>
             </div>
         `).join('');
     }
@@ -635,7 +728,7 @@ class ChatApp {
     // Render messages
     renderMessages() {
         const chatMessages = document.getElementById('chat-messages');
-        if (!chatMessages) return;
+        if (!chatMessages || !this.currentRoom) return;
         
         const roomMessages = this.messages.filter(msg => msg.roomId === this.currentRoom.id);
         
@@ -659,7 +752,6 @@ class ChatApp {
             `;
         }).join('');
 
-        // Scroll to bottom
         setTimeout(() => {
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }, 50);
@@ -668,7 +760,7 @@ class ChatApp {
     // Send message
     sendMessage() {
         const input = document.getElementById('message-input');
-        if (!input) return;
+        if (!input || !this.currentRoom) return;
         
         const text = input.value.trim();
         if (!text) return;
@@ -687,7 +779,6 @@ class ChatApp {
         input.value = '';
         this.renderMessages();
 
-        // Simulate delivery
         setTimeout(() => {
             message.status = 'delivered';
             this.renderMessages();
@@ -703,7 +794,7 @@ class ChatApp {
         }
 
         const typingIndicator = document.getElementById('typing-indicator');
-        if (typingIndicator) {
+        if (typingIndicator && this.currentUser) {
             typingIndicator.textContent = `${this.currentUser.username} is typing...`;
 
             this.typingTimeout = setTimeout(() => {
@@ -735,7 +826,7 @@ class ChatApp {
         }
 
         this.socketSimulation = setInterval(() => {
-            if (Math.random() < 0.15) {
+            if (Math.random() < 0.1 && this.currentRoom) {
                 const otherUsers = this.currentRoom.participants
                     .filter(id => id !== this.currentUser.id)
                     .map(id => this.users.find(u => u.id === id))
@@ -756,7 +847,7 @@ class ChatApp {
                     }
                 }
             }
-        }, 10000);
+        }, 12000);
     }
 
     // Utility functions
@@ -805,35 +896,7 @@ class ChatApp {
     }
 }
 
-// Initialize app when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, initializing ChatApp...');
-    window.chatApp = new ChatApp();
-});
-
-// Fallback initialization
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        if (!window.chatApp) {
-            console.log('Fallback: DOM loaded, initializing ChatApp...');
-            window.chatApp = new ChatApp();
-        }
-    });
-} else {
-    console.log('DOM already loaded, initializing ChatApp immediately...');
-    window.chatApp = new ChatApp();
-}
-
-// Handle browser navigation
-window.addEventListener('popstate', () => {
-    if (window.chatApp) {
-        window.chatApp.checkAuthentication();
-    }
-});
-
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-    if (window.chatApp && window.chatApp.socketSimulation) {
-        clearInterval(window.chatApp.socketSimulation);
-    }
-});
+// Initialize app
+console.log('Creating ChatApp instance...');
+const chatApp = new ChatApp();
+window.chatApp = chatApp;
