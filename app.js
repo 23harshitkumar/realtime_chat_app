@@ -1,17 +1,18 @@
-// ChatFlow Application - JavaScript with SPA Routing (Completely Fixed)
+// ChatFlow Application - Real Backend Integration with Fixed Permission System
 class ChatApp {
     constructor() {
         this.currentUser = null;
         this.currentRoom = null;
-        this.rooms = [];
-        this.messages = [];
-        this.users = [];
-        this.typingUsers = new Set();
-        this.socketSimulation = null;
+        this.socket = null;
         this.currentPage = 'auth';
         this.initialized = false;
+        this.pendingRequest = null;
         
-        console.log('ChatApp initializing...');
+        // Backend configuration
+        this.API_BASE = 'http://localhost:5000';
+        this.authToken = null;
+        
+        console.log('ChatApp initializing with real backend...');
         
         // Wait for DOM to be ready
         if (document.readyState === 'loading') {
@@ -26,197 +27,246 @@ class ChatApp {
         this.initialized = true;
         
         console.log('Starting app initialization...');
-        this.initializeData();
         this.checkAuthentication();
         this.setupEventListeners();
         this.setupRouting();
         console.log('App initialization complete');
     }
 
-    // Initialize sample data
-    initializeData() {
-        console.log('Initializing data...');
+    // Check authentication status from backend
+    async checkAuthentication() {
+        console.log('Checking authentication...');
         
-        this.users = [
-            {"id": "1", "username": "john_doe", "email": "john@example.com", "avatar": "JD"},
-            {"id": "2", "username": "jane_smith", "email": "jane@example.com", "avatar": "JS"},
-            {"id": "3", "username": "mike_wilson", "email": "mike@example.com", "avatar": "MW"},
-            {"id": "4", "username": "sarah_jones", "email": "sarah@example.com", "avatar": "SJ"}
-        ];
-
-        this.rooms = [
-            {
-                "id": "room_1", 
-                "name": "General Discussion", 
-                "participants": ["1", "2", "3"], 
-                "createdBy": "1",
-                "createdAt": "2025-01-15T10:00:00Z",
-                "link": "/room/room_1",
-                "lastActivity": "2025-01-15T12:30:00Z",
-                "messageCount": 15
-            },
-            {
-                "id": "room_2", 
-                "name": "Project Planning", 
-                "participants": ["1", "4"], 
-                "createdBy": "4",
-                "createdAt": "2025-01-15T14:30:00Z",
-                "link": "/room/room_2",
-                "lastActivity": "2025-01-15T15:45:00Z",
-                "messageCount": 8
-            },
-            {
-                "id": "room_3", 
-                "name": "Team Chat", 
-                "participants": ["2", "3", "4"], 
-                "createdBy": "2",
-                "createdAt": "2025-01-15T16:45:00Z",
-                "link": "/room/room_3",
-                "lastActivity": "2025-01-15T17:20:00Z",
-                "messageCount": 23
+        const token = this.getStoredToken();
+        if (!token) {
+            console.log('No token found, starting unauthenticated');
+            this.navigateToAuth();
+            return;
+        }
+        
+        try {
+            this.authToken = token;
+            const response = await this.apiCall('/api/auth/me', 'GET');
+            
+            if (response.success) {
+                this.currentUser = response.user;
+                console.log('Authentication successful:', this.currentUser.username);
+                this.initializeSocket();
+                this.navigateToDashboard();
+            } else {
+                throw new Error('Invalid token');
             }
-        ];
-
-        this.messages = [
-            {
-                "id": "msg_1",
-                "roomId": "room_1",
-                "userId": "1",
-                "username": "john_doe",
-                "text": "Hey everyone! Welcome to the general discussion room.",
-                "timestamp": "2025-01-15T10:05:00Z",
-                "status": "delivered"
-            },
-            {
-                "id": "msg_2",
-                "roomId": "room_1",
-                "userId": "2",
-                "username": "jane_smith",
-                "text": "Thanks for creating this room! This will be great for team communication.",
-                "timestamp": "2025-01-15T10:07:00Z",
-                "status": "delivered"
-            },
-            {
-                "id": "msg_3",
-                "roomId": "room_1",
-                "userId": "3",
-                "username": "mike_wilson",
-                "text": "Agreed! Looking forward to collaborating here.",
-                "timestamp": "2025-01-15T10:10:00Z",
-                "status": "delivered"
-            },
-            {
-                "id": "msg_4",
-                "roomId": "room_2",
-                "userId": "4",
-                "username": "sarah_jones",
-                "text": "Let's discuss the upcoming project milestones here.",
-                "timestamp": "2025-01-15T14:35:00Z",
-                "status": "delivered"
-            },
-            {
-                "id": "msg_5",
-                "roomId": "room_2",
-                "userId": "1",
-                "username": "john_doe",
-                "text": "Sounds good! I have some ideas to share.",
-                "timestamp": "2025-01-15T14:40:00Z",
-                "status": "delivered"
-            }
-        ];
-
-        console.log('Data initialized with', this.users.length, 'users and', this.rooms.length, 'rooms');
+        } catch (error) {
+            console.error('Authentication failed:', error);
+            this.clearStoredToken();
+            this.navigateToAuth();
+        }
     }
 
-    // Setup event listeners with improved error handling
+    // Initialize Socket.IO connection
+    initializeSocket() {
+        if (this.socket && this.socket.connected) {
+            return;
+        }
+
+        console.log('Initializing Socket.IO connection...');
+        
+        try {
+            this.socket = io(this.API_BASE, {
+                auth: {
+                    token: this.authToken
+                }
+            });
+
+            this.socket.on('connect', () => {
+                console.log('Socket connected');
+                this.updateConnectionStatus('connected');
+            });
+
+            this.socket.on('disconnect', () => {
+                console.log('Socket disconnected');
+                this.updateConnectionStatus('disconnected');
+            });
+
+            this.socket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+                this.updateConnectionStatus('disconnected');
+            });
+
+            // Room permission events - THE MAIN FIX
+            this.socket.on('room-request-notification', (data) => {
+                console.log('Received room permission request:', data);
+                this.showPermissionRequest(data);
+            });
+
+            this.socket.on('room-access-granted', (data) => {
+                console.log('Room access granted:', data);
+                this.handleAccessGranted(data);
+            });
+
+            this.socket.on('room-access-denied', (data) => {
+                console.log('Room access denied:', data);
+                this.handleAccessDenied(data);
+            });
+
+            // Chat events
+            this.socket.on('receive-message', (message) => {
+                console.log('Received message:', message);
+                this.handleNewMessage(message);
+            });
+
+            this.socket.on('typing', (data) => {
+                this.handleTyping(data);
+            });
+
+            this.socket.on('stop-typing', (data) => {
+                this.handleStopTyping(data);
+            });
+
+            this.socket.on('user-joined', (data) => {
+                console.log('User joined room:', data);
+                this.handleUserJoined(data);
+            });
+
+            this.socket.on('user-left', (data) => {
+                console.log('User left room:', data);
+                this.handleUserLeft(data);
+            });
+        } catch (error) {
+            console.error('Socket initialization error:', error);
+            this.updateConnectionStatus('disconnected');
+        }
+    }
+
+    // Setup event listeners - FIXED
     setupEventListeners() {
         console.log('Setting up event listeners...');
         
-        // Auth tabs - using event delegation for reliability
-        document.addEventListener('click', (e) => {
-            if (e.target.id === 'login-tab') {
+        // Direct event listeners - no event delegation to fix interaction issues
+        
+        // Auth tabs - Direct listeners
+        const loginTab = document.getElementById('login-tab');
+        const registerTab = document.getElementById('register-tab');
+        
+        if (loginTab) {
+            loginTab.addEventListener('click', (e) => {
                 e.preventDefault();
-                console.log('Login tab clicked via delegation');
+                e.stopPropagation();
+                console.log('Login tab clicked directly');
                 this.switchAuthTab('login');
-            } else if (e.target.id === 'register-tab') {
+            });
+        }
+        
+        if (registerTab) {
+            registerTab.addEventListener('click', (e) => {
                 e.preventDefault();
-                console.log('Register tab clicked via delegation');
+                e.stopPropagation();
+                console.log('Register tab clicked directly');
                 this.switchAuthTab('register');
-            } else if (e.target.id === 'logout-btn') {
+            });
+        }
+
+        // Form submissions - Direct listeners
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const createRoomForm = document.getElementById('create-room-form');
+        
+        if (loginForm) {
+            loginForm.addEventListener('submit', (e) => {
                 e.preventDefault();
-                this.handleLogout();
-            } else if (e.target.id === 'create-room-btn') {
+                e.stopPropagation();
+                console.log('Login form submitted directly');
+                this.handleLogin();
+            });
+        }
+        
+        if (registerForm) {
+            registerForm.addEventListener('submit', (e) => {
                 e.preventDefault();
-                this.showCreateRoomModal();
-            } else if (e.target.id === 'back-to-dashboard') {
+                e.stopPropagation();
+                console.log('Register form submitted directly');
+                this.handleRegister();
+            });
+        }
+        
+        if (createRoomForm) {
+            createRoomForm.addEventListener('submit', (e) => {
                 e.preventDefault();
-                this.navigateToDashboard();
-            } else if (e.target.id === 'send-btn') {
+                e.stopPropagation();
+                this.handleCreateRoom();
+            });
+        }
+
+        // Button clicks - Direct listeners
+        const buttons = [
+            { id: 'logout-btn', handler: () => this.handleLogout() },
+            { id: 'create-room-btn', handler: () => this.showCreateRoomModal() },
+            { id: 'back-to-dashboard', handler: () => this.navigateToDashboard() },
+            { id: 'send-btn', handler: () => this.sendMessage() },
+            { id: 'copy-link-btn', handler: () => this.copyRoomLink() },
+            { id: 'close-modal', handler: () => this.hideModals() },
+            { id: 'cancel-room', handler: () => this.hideModals() },
+            { id: 'cancel-join', handler: () => this.hideModals() },
+            { id: 'approve-request', handler: () => this.approvePermissionRequest() },
+            { id: 'reject-request', handler: () => this.rejectPermissionRequest() },
+            { id: 'quick-approve', handler: () => this.quickApproveRequest() },
+            { id: 'quick-reject', handler: () => this.quickRejectRequest() }
+        ];
+
+        buttons.forEach(({ id, handler }) => {
+            const button = document.getElementById(id);
+            if (button) {
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log(`Button ${id} clicked directly`);
+                    handler();
+                });
+            }
+        });
+
+        // Message input events
+        const messageInput = document.getElementById('message-input');
+        if (messageInput) {
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.sendMessage();
+                } else {
+                    this.handleTypingStart();
+                }
+            });
+        }
+
+        // Room cards - Use event delegation for dynamic content
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('room-card') || e.target.closest('.room-card')) {
                 e.preventDefault();
-                this.sendMessage();
-            } else if (e.target.id === 'copy-link-btn') {
-                e.preventDefault();
-                this.copyRoomLink();
-            } else if (e.target.id === 'close-modal') {
-                e.preventDefault();
-                this.hideCreateRoomModal();
-            } else if (e.target.id === 'cancel-room') {
-                e.preventDefault();
-                this.hideCreateRoomModal();
-            } else if (e.target.classList.contains('room-card')) {
-                const roomId = e.target.getAttribute('data-room-id');
+                const roomCard = e.target.closest('.room-card') || e.target;
+                const roomId = roomCard.getAttribute('data-room-id');
                 if (roomId) {
+                    console.log('Room card clicked:', roomId);
                     this.joinRoom(roomId);
                 }
             }
         });
 
-        // Form submissions
-        document.addEventListener('submit', (e) => {
-            if (e.target.id === 'login-form') {
-                e.preventDefault();
-                console.log('Login form submitted via delegation');
-                this.handleLogin();
-            } else if (e.target.id === 'register-form') {
-                e.preventDefault();
-                console.log('Register form submitted via delegation');
-                this.handleRegister();
-            } else if (e.target.id === 'create-room-form') {
-                e.preventDefault();
-                this.handleCreateRoom();
-            }
-        });
-
-        // Message input
-        document.addEventListener('keypress', (e) => {
-            if (e.target.id === 'message-input' && e.key === 'Enter') {
-                e.preventDefault();
-                this.sendMessage();
-            } else if (e.target.id === 'message-input') {
-                this.handleTyping();
-            }
-        });
-
         // Modal backdrop clicks
         document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('modal-backdrop') || e.target.id === 'create-room-modal') {
-                this.hideCreateRoomModal();
+            if (e.target.classList.contains('modal-backdrop')) {
+                this.hideModals();
             }
         });
-        
-        console.log('Event listeners set up successfully using delegation');
     }
 
     // Setup routing system
     setupRouting() {
         console.log('Setting up routing...');
         
-        // Handle browser navigation
         window.addEventListener('popstate', () => {
             this.handleRouteChange();
         });
         
-        // Handle initial route
         this.handleRouteChange();
     }
 
@@ -225,7 +275,16 @@ class ChatApp {
         const hash = window.location.hash;
         console.log('Route change:', hash);
         
-        if (hash.startsWith('#chat/')) {
+        if (hash.startsWith('#room/')) {
+            const roomId = hash.replace('#room/', '');
+            if (this.currentUser) {
+                this.handleSharedRoomLink(roomId);
+            } else {
+                // Store the intended room for after authentication
+                this.intendedRoom = roomId;
+                this.navigateToAuth();
+            }
+        } else if (hash.startsWith('#chat/')) {
             const roomId = hash.replace('#chat/', '');
             if (this.currentUser) {
                 this.navigateToChat(roomId);
@@ -238,10 +297,7 @@ class ChatApp {
             } else {
                 this.navigateToAuth();
             }
-        } else if (hash === '#login' || hash === '#register') {
-            this.navigateToAuth();
         } else {
-            // Default route based on auth status
             if (this.currentUser) {
                 this.navigateToPage('dashboard');
             } else {
@@ -250,20 +306,228 @@ class ChatApp {
         }
     }
 
+    // Handle shared room links - FIXED PERMISSION SYSTEM
+    async handleSharedRoomLink(roomId) {
+        console.log('Handling shared room link:', roomId);
+        
+        try {
+            // Check if user already has access
+            const response = await this.apiCall(`/api/rooms/${roomId}`, 'GET');
+            
+            if (response.success) {
+                // User has access, navigate to chat
+                this.navigateToChat(roomId);
+            } else {
+                // User needs permission, request access
+                this.requestRoomAccess(roomId);
+            }
+        } catch (error) {
+            console.error('Error checking room access:', error);
+            
+            if (error.message.includes('403') || error.message.includes('Unauthorized')) {
+                // Request permission
+                this.requestRoomAccess(roomId);
+            } else {
+                this.showToast('Room not found or error occurred', 'error');
+                this.navigateToDashboard();
+            }
+        }
+    }
+
+    // Request room access - FIXED
+    async requestRoomAccess(roomId) {
+        console.log('Requesting room access for:', roomId);
+        
+        try {
+            const response = await this.apiCall(`/api/rooms/${roomId}/request-access`, 'POST');
+            
+            if (response.success) {
+                // Show waiting modal
+                this.showJoinRoomModal(roomId, response.room.name);
+                
+                // Send socket event to room owner
+                if (this.socket) {
+                    this.socket.emit('request-room-access', {
+                        roomId: roomId,
+                        requester: this.currentUser
+                    });
+                }
+                
+                this.showToast('Permission request sent to room owner', 'info');
+            } else {
+                throw new Error(response.message || 'Failed to request access');
+            }
+        } catch (error) {
+            console.error('Error requesting room access:', error);
+            this.showToast('Failed to request room access', 'error');
+            this.navigateToDashboard();
+        }
+    }
+
+    // Show permission request notification to room host - FIXED
+    showPermissionRequest(data) {
+        console.log('Showing permission request notification:', data);
+        
+        this.pendingRequest = data;
+        
+        // Show modal
+        const modal = document.getElementById('permission-request-modal');
+        const requesterName = document.getElementById('requester-name');
+        const roomName = document.getElementById('request-room-name');
+        
+        if (modal && requesterName && roomName) {
+            requesterName.textContent = data.requester.username;
+            roomName.textContent = data.roomName;
+            modal.classList.remove('hidden');
+        }
+        
+        // Show notification popup
+        const notification = document.getElementById('permission-notification');
+        const notificationRequester = document.getElementById('notification-requester');
+        
+        if (notification && notificationRequester) {
+            notificationRequester.textContent = data.requester.username;
+            notification.classList.remove('hidden');
+            setTimeout(() => notification.classList.add('show'), 100);
+        }
+        
+        // Auto-hide notification after 10 seconds
+        setTimeout(() => {
+            if (notification) {
+                notification.classList.remove('show');
+                setTimeout(() => notification.classList.add('hidden'), 300);
+            }
+        }, 10000);
+    }
+
+    // Approve permission request
+    async approvePermissionRequest() {
+        if (!this.pendingRequest) return;
+        
+        console.log('Approving permission request:', this.pendingRequest);
+        
+        try {
+            const response = await this.apiCall('/api/rooms/approve-request', 'POST', {
+                roomId: this.pendingRequest.roomId,
+                userId: this.pendingRequest.requester._id
+            });
+            
+            if (response.success) {
+                // Send socket event to requester
+                if (this.socket) {
+                    this.socket.emit('approve-room-request', {
+                        roomId: this.pendingRequest.roomId,
+                        userId: this.pendingRequest.requester._id,
+                        roomName: this.pendingRequest.roomName
+                    });
+                }
+                
+                this.showToast(`Approved ${this.pendingRequest.requester.username}'s request`, 'success');
+                this.hideModals();
+                this.hidePermissionNotification();
+            } else {
+                throw new Error(response.message || 'Failed to approve request');
+            }
+        } catch (error) {
+            console.error('Error approving request:', error);
+            this.showToast('Failed to approve request', 'error');
+        }
+        
+        this.pendingRequest = null;
+    }
+
+    // Reject permission request
+    async rejectPermissionRequest() {
+        if (!this.pendingRequest) return;
+        
+        console.log('Rejecting permission request:', this.pendingRequest);
+        
+        try {
+            const response = await this.apiCall('/api/rooms/reject-request', 'POST', {
+                roomId: this.pendingRequest.roomId,
+                userId: this.pendingRequest.requester._id
+            });
+            
+            if (response.success) {
+                // Send socket event to requester
+                if (this.socket) {
+                    this.socket.emit('reject-room-request', {
+                        roomId: this.pendingRequest.roomId,
+                        userId: this.pendingRequest.requester._id,
+                        roomName: this.pendingRequest.roomName
+                    });
+                }
+                
+                this.showToast(`Rejected ${this.pendingRequest.requester.username}'s request`, 'info');
+                this.hideModals();
+                this.hidePermissionNotification();
+            } else {
+                throw new Error(response.message || 'Failed to reject request');
+            }
+        } catch (error) {
+            console.error('Error rejecting request:', error);
+            this.showToast('Failed to reject request', 'error');
+        }
+        
+        this.pendingRequest = null;
+    }
+
+    // Quick approve from notification
+    quickApproveRequest() {
+        this.hidePermissionNotification();
+        this.approvePermissionRequest();
+    }
+
+    // Quick reject from notification
+    quickRejectRequest() {
+        this.hidePermissionNotification();
+        this.rejectPermissionRequest();
+    }
+
+    // Hide permission notification
+    hidePermissionNotification() {
+        const notification = document.getElementById('permission-notification');
+        if (notification) {
+            notification.classList.remove('show');
+            setTimeout(() => notification.classList.add('hidden'), 300);
+        }
+    }
+
+    // Handle access granted
+    handleAccessGranted(data) {
+        console.log('Access granted:', data);
+        
+        this.hideModals();
+        this.showToast(`Access granted to ${data.roomName}!`, 'success');
+        
+        // Navigate to the room
+        setTimeout(() => {
+            this.navigateToChat(data.roomId);
+        }, 1000);
+    }
+
+    // Handle access denied
+    handleAccessDenied(data) {
+        console.log('Access denied:', data);
+        
+        this.hideModals();
+        this.showToast(`Access denied to ${data.roomName}`, 'error');
+        
+        // Navigate back to dashboard
+        setTimeout(() => {
+            this.navigateToDashboard();
+        }, 2000);
+    }
+
     // Navigate to a specific page
     navigateToPage(pageName, updateUrl = true) {
         console.log('Navigating to page:', pageName);
         
-        if (this.currentPage === pageName) {
-            console.log('Already on page:', pageName);
-            return;
-        }
+        if (this.currentPage === pageName) return;
 
-        // Hide all pages first
+        // Hide all pages
         const allPages = document.querySelectorAll('.page');
-        allPages.forEach(page => {
-            page.classList.remove('active');
-        });
+        allPages.forEach(page => page.classList.remove('active'));
 
         const targetPageEl = document.getElementById(`${pageName}-page`);
         if (!targetPageEl) {
@@ -276,7 +540,7 @@ class ChatApp {
             const urlMap = {
                 'auth': '#login',
                 'dashboard': '#dashboard',
-                'chat': `#chat/${this.currentRoom ? this.currentRoom.id : ''}`
+                'chat': `#chat/${this.currentRoom ? this.currentRoom._id : ''}`
             };
             
             if (urlMap[pageName]) {
@@ -284,18 +548,16 @@ class ChatApp {
             }
         }
 
-        // Show target page with transition
+        // Show target page
         setTimeout(() => {
             targetPageEl.classList.add('active');
             this.currentPage = pageName;
-            
-            // Page-specific initialization
             this.onPageEnter(pageName);
         }, 50);
     }
 
     // Handle page enter events
-    onPageEnter(pageName) {
+    async onPageEnter(pageName) {
         console.log('Entered page:', pageName);
         
         switch (pageName) {
@@ -308,14 +570,26 @@ class ChatApp {
                 
             case 'dashboard':
                 this.updateUserInfo();
-                this.renderRooms();
+                await this.loadRooms();
+                
+                // Check if we have an intended room from shared link
+                if (this.intendedRoom) {
+                    const roomId = this.intendedRoom;
+                    this.intendedRoom = null;
+                    this.handleSharedRoomLink(roomId);
+                }
                 break;
                 
             case 'chat':
                 this.updateChatHeader();
-                this.renderParticipants();
-                this.renderMessages();
-                this.startSocketSimulation();
+                await this.loadMessages();
+                this.loadParticipants();
+                
+                // Join the room via socket
+                if (this.socket && this.currentRoom) {
+                    this.socket.emit('join-room', this.currentRoom._id);
+                }
+                
                 setTimeout(() => {
                     const messageInput = document.getElementById('message-input');
                     if (messageInput) messageInput.focus();
@@ -329,37 +603,30 @@ class ChatApp {
         this.navigateToPage('auth');
     }
 
-    // Navigate to dashboard
+    // Navigate to dashboard  
     navigateToDashboard() {
         this.navigateToPage('dashboard');
     }
 
     // Navigate to chat
-    navigateToChat(roomId) {
-        const room = this.rooms.find(r => r.id === roomId);
-        if (!room) {
-            console.error('Room not found:', roomId);
+    async navigateToChat(roomId) {
+        try {
+            const response = await this.apiCall(`/api/rooms/${roomId}`, 'GET');
+            
+            if (response.success) {
+                this.currentRoom = response.room;
+                this.navigateToPage('chat');
+            } else {
+                throw new Error(response.message || 'Room not found');
+            }
+        } catch (error) {
+            console.error('Error loading room:', error);
+            this.showToast('Failed to load room', 'error');
             this.navigateToDashboard();
-            return;
         }
-
-        if (!room.participants.includes(this.currentUser.id)) {
-            room.participants.push(this.currentUser.id);
-        }
-
-        this.currentRoom = room;
-        this.navigateToPage('chat');
     }
 
-    // Check authentication status
-    checkAuthentication() {
-        console.log('Checking authentication...');
-        // For demo purposes, don't auto-login
-        this.currentUser = null;
-        console.log('Starting with no authentication');
-    }
-
-    // Switch auth tabs - Completely fixed
+    // Switch auth tabs - FIXED
     switchAuthTab(tab) {
         console.log('Switching to', tab, 'tab');
         
@@ -373,11 +640,15 @@ class ChatApp {
             return;
         }
 
-        // Remove active class from both tabs
+        // Reset forms and errors
+        loginForm.reset();
+        registerForm.reset();
+        this.hideError('login-error');
+        this.hideError('register-error');
+
+        // Remove active states
         loginTab.classList.remove('active');
         registerTab.classList.remove('active');
-        
-        // Hide both forms
         loginForm.classList.add('hidden');
         registerForm.classList.add('hidden');
 
@@ -392,7 +663,7 @@ class ChatApp {
             }, 100);
         } else if (tab === 'register') {
             registerTab.classList.add('active');
-            registerForm.classList.remove('hidden');
+            registerForm.classList.remove('hidden');  
             window.history.replaceState(null, null, '#register');
             
             setTimeout(() => {
@@ -404,7 +675,7 @@ class ChatApp {
         console.log('Tab switched successfully to:', tab);
     }
 
-    // Handle login - Completely fixed
+    // Handle login - FIXED VALIDATION
     async handleLogin() {
         console.log('Handling login...');
         
@@ -412,59 +683,81 @@ class ChatApp {
         const passwordInput = document.getElementById('login-password');
         
         if (!emailInput || !passwordInput) {
-            console.error('Login form elements not found');
-            this.showToast('Login form error', 'error');
+            this.showError('login-error', 'Form elements not found');
             return;
         }
         
         const email = emailInput.value.trim();
         const password = passwordInput.value.trim();
 
-        console.log('Login attempt for email:', email);
+        // Clear previous errors
+        this.hideError('login-error');
 
+        // Client-side validation - FIXED
         if (!email || !password) {
-            this.showToast('Please fill in all fields', 'error');
+            this.showError('login-error', 'Please fill in all fields');
             return;
         }
 
-        // Show loading
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            this.showError('login-error', 'Please enter a valid email address');
+            return;
+        }
+
+        if (password.length < 6) {
+            this.showError('login-error', 'Password must be at least 6 characters');
+            return;
+        }
+
         this.showLoading();
 
         try {
-            // Simulate API delay
-            await this.delay(1000);
+            const response = await this.apiCall('/api/auth/login', 'POST', {
+                email,
+                password
+            });
 
-            const user = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-            console.log('User lookup result:', user ? user.username : 'not found');
-            
-            if (user) {
-                this.currentUser = user;
-                console.log('Login successful for:', this.currentUser.username);
+            if (response.success) {
+                this.authToken = response.token;
+                this.currentUser = response.user;
+                this.storeToken(response.token);
+                
+                console.log('Login successful:', this.currentUser.username);
                 
                 this.hideLoading();
-                this.showToast('Welcome back, ' + user.username + '!', 'success');
+                this.showToast(`Welcome back, ${this.currentUser.username}!`, 'success');
                 
-                // Clear form
-                emailInput.value = '';
-                passwordInput.value = '';
+                // Initialize socket and navigate
+                this.initializeSocket();
                 
-                // Navigate to dashboard after a short delay
                 setTimeout(() => {
                     this.navigateToDashboard();
                 }, 800);
                 
             } else {
-                this.hideLoading();
-                this.showToast('Invalid email or password. Try: john@example.com', 'error');
+                throw new Error(response.message || 'Login failed');
             }
         } catch (error) {
             console.error('Login error:', error);
             this.hideLoading();
-            this.showToast('Login failed. Please try again.', 'error');
+            
+            // Better error handling
+            let errorMessage = 'Login failed. Please try again.';
+            
+            if (error.message.includes('Invalid credentials') || error.message.includes('401')) {
+                errorMessage = 'Invalid email or password. Please check your credentials.';
+            } else if (error.message.includes('Network') || error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+                errorMessage = 'Cannot connect to server. Please check if the backend is running on http://localhost:5000';
+            } else if (error.message.includes('CORS')) {
+                errorMessage = 'CORS error. Please ensure the backend allows requests from this domain.';
+            }
+            
+            this.showError('login-error', errorMessage);
         }
     }
 
-    // Handle registration - Completely fixed
+    // Handle registration - FIXED VALIDATION
     async handleRegister() {
         console.log('Handling registration...');
         
@@ -473,8 +766,7 @@ class ChatApp {
         const passwordInput = document.getElementById('register-password');
         
         if (!usernameInput || !emailInput || !passwordInput) {
-            console.error('Register form elements not found');
-            this.showToast('Registration form error', 'error');
+            this.showError('register-error', 'Form elements not found');
             return;
         }
         
@@ -482,57 +774,76 @@ class ChatApp {
         const email = emailInput.value.trim();
         const password = passwordInput.value.trim();
 
+        // Clear previous errors
+        this.hideError('register-error');
+
+        // Client-side validation - FIXED
         if (!username || !email || !password) {
-            this.showToast('Please fill in all fields', 'error');
+            this.showError('register-error', 'Please fill in all fields');
+            return;
+        }
+
+        if (username.length < 3) {
+            this.showError('register-error', 'Username must be at least 3 characters');
             return;
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            this.showToast('Please enter a valid email address', 'error');
+            this.showError('register-error', 'Please enter a valid email address');
+            return;
+        }
+
+        if (password.length < 6) {
+            this.showError('register-error', 'Password must be at least 6 characters');
             return;
         }
 
         this.showLoading();
 
         try {
-            await this.delay(1000);
+            const response = await this.apiCall('/api/auth/register', 'POST', {
+                username,
+                email,
+                password
+            });
 
-            const existingUser = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-            if (existingUser) {
+            if (response.success) {
+                this.authToken = response.token;
+                this.currentUser = response.user;
+                this.storeToken(response.token);
+                
+                console.log('Registration successful:', this.currentUser.username);
+                
                 this.hideLoading();
-                this.showToast('User with this email already exists!', 'error');
-                return;
+                this.showToast(`Welcome, ${this.currentUser.username}!`, 'success');
+                
+                // Initialize socket and navigate
+                this.initializeSocket();
+                
+                setTimeout(() => {
+                    this.navigateToDashboard();
+                }, 800);
+                
+            } else {
+                throw new Error(response.message || 'Registration failed');
             }
-
-            const newUser = {
-                id: Date.now().toString(),
-                username: username,
-                email: email,
-                avatar: username.substring(0, 2).toUpperCase()
-            };
-
-            this.users.push(newUser);
-            this.currentUser = newUser;
-            
-            console.log('Registration successful:', newUser.username);
-            
-            this.hideLoading();
-            this.showToast('Welcome, ' + newUser.username + '!', 'success');
-            
-            // Clear form
-            usernameInput.value = '';
-            emailInput.value = '';
-            passwordInput.value = '';
-            
-            setTimeout(() => {
-                this.navigateToDashboard();
-            }, 800);
-            
         } catch (error) {
             console.error('Registration error:', error);
             this.hideLoading();
-            this.showToast('Registration failed. Please try again.', 'error');
+            
+            // Better error handling
+            let errorMessage = 'Registration failed. Please try again.';
+            
+            if (error.message.includes('already exists') || error.message.includes('duplicate')) {
+                errorMessage = 'An account with this email already exists. Please use a different email or try logging in.';
+            } else if (error.message.includes('Network') || error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+                errorMessage = 'Cannot connect to server. Please check if the backend is running on http://localhost:5000';
+            } else if (error.message.includes('CORS')) {
+                errorMessage = 'CORS error. Please ensure the backend allows requests from this domain.';
+            }
+            
+            this.showError('register-error', errorMessage);
         }
     }
 
@@ -542,10 +853,12 @@ class ChatApp {
         
         this.currentUser = null;
         this.currentRoom = null;
+        this.authToken = null;
+        this.clearStoredToken();
         
-        if (this.socketSimulation) {
-            clearInterval(this.socketSimulation);
-            this.socketSimulation = null;
+        if (this.socket) {
+            this.socket.disconnect();
+            this.socket = null;
         }
         
         this.navigateToAuth();
@@ -558,29 +871,48 @@ class ChatApp {
         const userName = document.getElementById('user-name');
         
         if (userAvatar && userName && this.currentUser) {
-            userAvatar.textContent = this.currentUser.avatar;
+            userAvatar.textContent = this.currentUser.username.substring(0, 2).toUpperCase();
             userName.textContent = this.currentUser.username;
-            console.log('User info updated:', this.currentUser.username);
+        }
+    }
+
+    // Load rooms from backend
+    async loadRooms() {
+        console.log('Loading rooms...');
+        
+        const roomsList = document.getElementById('rooms-list');
+        if (!roomsList) return;
+
+        try {
+            const response = await this.apiCall('/api/rooms', 'GET');
+            
+            if (response.success) {
+                this.renderRooms(response.rooms);
+            } else {
+                throw new Error(response.message || 'Failed to load rooms');
+            }
+        } catch (error) {
+            console.error('Error loading rooms:', error);
+            roomsList.innerHTML = `
+                <div class="card" style="text-align: center; padding: 2rem; color: var(--color-error);">
+                    <h3>Error Loading Rooms</h3>
+                    <p>Please check your connection and ensure the backend is running.</p>
+                    <p style="font-size: var(--font-size-sm); color: var(--color-text-secondary);">
+                        Expected backend: http://localhost:5000
+                    </p>
+                </div>
+            `;
         }
     }
 
     // Render rooms
-    renderRooms() {
-        console.log('Rendering rooms...');
+    renderRooms(rooms) {
+        console.log('Rendering rooms:', rooms.length);
         
         const roomsList = document.getElementById('rooms-list');
-        if (!roomsList) {
-            console.error('Rooms list element not found');
-            return;
-        }
+        if (!roomsList) return;
 
-        const userRooms = this.rooms.filter(room => 
-            room.participants.includes(this.currentUser.id)
-        );
-
-        console.log('User rooms found:', userRooms.length);
-
-        if (userRooms.length === 0) {
+        if (rooms.length === 0) {
             roomsList.innerHTML = `
                 <div class="card" style="text-align: center; padding: 2rem;">
                     <h3>No rooms yet</h3>
@@ -590,13 +922,13 @@ class ChatApp {
             return;
         }
 
-        roomsList.innerHTML = userRooms.map(room => {
-            const participantCount = room.participants.length;
+        roomsList.innerHTML = rooms.map(room => {
+            const participantCount = room.participants ? room.participants.length : 0;
             const createdDate = new Date(room.createdAt).toLocaleDateString();
             const messageCount = room.messageCount || 0;
             
             return `
-                <div class="room-card" data-room-id="${room.id}">
+                <div class="room-card" data-room-id="${room._id}">
                     <h3>${this.escapeHtml(room.name)}</h3>
                     <div class="room-meta">
                         <span class="participants-count">
@@ -612,8 +944,6 @@ class ChatApp {
                 </div>
             `;
         }).join('');
-        
-        console.log('Rooms rendered successfully');
     }
 
     // Join room
@@ -624,7 +954,6 @@ class ChatApp {
 
     // Show create room modal
     showCreateRoomModal() {
-        console.log('Showing create room modal...');
         const modal = document.getElementById('create-room-modal');
         if (modal) {
             modal.classList.remove('hidden');
@@ -635,15 +964,25 @@ class ChatApp {
         }
     }
 
-    // Hide create room modal
-    hideCreateRoomModal() {
-        console.log('Hiding create room modal...');
-        const modal = document.getElementById('create-room-modal');
-        if (modal) {
-            modal.classList.add('hidden');
+    // Show join room modal
+    showJoinRoomModal(roomId, roomName) {
+        const modal = document.getElementById('join-room-modal');
+        const roomNameEl = document.getElementById('join-room-name');
+        
+        if (modal && roomNameEl) {
+            roomNameEl.textContent = roomName;
+            modal.classList.remove('hidden');
         }
-        const form = document.getElementById('create-room-form');
-        if (form) form.reset();
+    }
+
+    // Hide all modals
+    hideModals() {
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => modal.classList.add('hidden'));
+        
+        // Reset forms
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => form.reset());
     }
 
     // Handle create room
@@ -651,10 +990,7 @@ class ChatApp {
         console.log('Creating room...');
         
         const roomNameInput = document.getElementById('room-name-input');
-        if (!roomNameInput) {
-            this.showToast('Room name input not found', 'error');
-            return;
-        }
+        if (!roomNameInput) return;
         
         const roomName = roomNameInput.value.trim();
         
@@ -666,28 +1002,22 @@ class ChatApp {
         this.showLoading();
         
         try {
-            await this.delay(500);
+            const response = await this.apiCall('/api/rooms', 'POST', {
+                name: roomName
+            });
 
-            const newRoom = {
-                id: `room_${Date.now()}`,
-                name: roomName,
-                participants: [this.currentUser.id],
-                createdBy: this.currentUser.id,
-                createdAt: new Date().toISOString(),
-                link: `/room/room_${Date.now()}`,
-                lastActivity: new Date().toISOString(),
-                messageCount: 0
-            };
-
-            this.rooms.push(newRoom);
-            
-            console.log('Room created:', newRoom.name);
-            
-            this.hideLoading();
-            this.hideCreateRoomModal();
-            this.showToast('Room "' + roomName + '" created successfully!', 'success');
-            this.renderRooms();
-            
+            if (response.success) {
+                console.log('Room created:', response.room.name);
+                
+                this.hideLoading();
+                this.hideModals();
+                this.showToast(`Room "${roomName}" created successfully!`, 'success');
+                
+                // Refresh rooms list
+                await this.loadRooms();
+            } else {
+                throw new Error(response.message || 'Failed to create room');
+            }
         } catch (error) {
             console.error('Create room error:', error);
             this.hideLoading();
@@ -704,48 +1034,61 @@ class ChatApp {
             roomNameEl.textContent = this.currentRoom.name;
         }
         if (roomLinkEl && this.currentRoom) {
-            roomLinkEl.value = window.location.origin + this.currentRoom.link;
+            roomLinkEl.value = `${window.location.origin}#room/${this.currentRoom._id}`;
         }
     }
 
-    // Render participants
-    renderParticipants() {
-        const participantsList = document.getElementById('participants-list');
-        if (!participantsList || !this.currentRoom) return;
-        
-        const participants = this.currentRoom.participants.map(userId => {
-            return this.users.find(u => u.id === userId);
-        }).filter(Boolean);
-
-        participantsList.innerHTML = participants.map(user => `
-            <div class="participant">
-                <div class="participant-avatar">${user.avatar}</div>
-                <span class="participant-name">${this.escapeHtml(user.username)}</span>
-            </div>
-        `).join('');
-    }
-
-    // Render messages
-    renderMessages() {
+    // Load messages
+    async loadMessages() {
         const chatMessages = document.getElementById('chat-messages');
         if (!chatMessages || !this.currentRoom) return;
         
-        const roomMessages = this.messages.filter(msg => msg.roomId === this.currentRoom.id);
+        try {
+            const response = await this.apiCall(`/api/rooms/${this.currentRoom._id}/messages`, 'GET');
+            
+            if (response.success) {
+                this.renderMessages(response.messages);
+            } else {
+                throw new Error(response.message || 'Failed to load messages');
+            }
+        } catch (error) {
+            console.error('Error loading messages:', error);
+            chatMessages.innerHTML = `
+                <div style="text-align: center; color: var(--color-error); padding: 2rem;">
+                    Error loading messages
+                </div>
+            `;
+        }
+    }
+
+    // Render messages
+    renderMessages(messages) {
+        const chatMessages = document.getElementById('chat-messages');
+        if (!chatMessages) return;
         
-        chatMessages.innerHTML = roomMessages.map(message => {
-            const user = this.users.find(u => u.id === message.userId);
-            const isSent = message.userId === this.currentUser.id;
+        if (messages.length === 0) {
+            chatMessages.innerHTML = `
+                <div style="text-align: center; color: var(--color-text-secondary); padding: 2rem;">
+                    No messages yet. Start the conversation!
+                </div>
+            `;
+            return;
+        }
+
+        chatMessages.innerHTML = messages.map(message => {
+            const isSent = message.sender._id === this.currentUser._id;
             const messageClass = isSent ? 'sent' : 'received';
-            const timestamp = new Date(message.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const timestamp = new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const avatar = message.sender.username.substring(0, 2).toUpperCase();
             
             return `
                 <div class="message ${messageClass}">
-                    <div class="message-avatar">${user ? user.avatar : '??'}</div>
+                    <div class="message-avatar">${avatar}</div>
                     <div class="message-content">
-                        <div class="message-bubble">${this.escapeHtml(message.text)}</div>
+                        <div class="message-bubble">${this.escapeHtml(message.content)}</div>
                         <div class="message-meta">
                             <span class="message-time">${timestamp}</span>
-                            ${isSent ? `<span class="message-status">✓ ${message.status}</span>` : ''}
+                            ${isSent ? '<span class="message-status">✓ sent</span>' : ''}
                         </div>
                     </div>
                 </div>
@@ -757,49 +1100,123 @@ class ChatApp {
         }, 50);
     }
 
+    // Load participants
+    loadParticipants() {
+        const participantsList = document.getElementById('participants-list');
+        if (!participantsList || !this.currentRoom) return;
+        
+        const participants = this.currentRoom.participants || [];
+
+        participantsList.innerHTML = participants.map(user => {
+            const avatar = user.username.substring(0, 2).toUpperCase();
+            return `
+                <div class="participant">
+                    <div class="participant-avatar">${avatar}</div>
+                    <span class="participant-name">${this.escapeHtml(user.username)}</span>
+                </div>
+            `;
+        }).join('');
+    }
+
     // Send message
     sendMessage() {
         const input = document.getElementById('message-input');
-        if (!input || !this.currentRoom) return;
+        if (!input || !this.currentRoom || !this.socket) return;
         
         const text = input.value.trim();
         if (!text) return;
 
-        const message = {
-            id: `msg_${Date.now()}`,
-            roomId: this.currentRoom.id,
-            userId: this.currentUser.id,
-            username: this.currentUser.username,
-            text: text,
-            timestamp: new Date().toISOString(),
-            status: 'sent'
-        };
+        // Send via socket
+        this.socket.emit('send-message', {
+            roomId: this.currentRoom._id,
+            content: text
+        });
 
-        this.messages.push(message);
         input.value = '';
-        this.renderMessages();
-
-        setTimeout(() => {
-            message.status = 'delivered';
-            this.renderMessages();
-        }, 1000);
-        
         console.log('Message sent:', text);
     }
 
-    // Handle typing
-    handleTyping() {
+    // Handle new message from socket
+    handleNewMessage(message) {
+        const chatMessages = document.getElementById('chat-messages');
+        if (!chatMessages) return;
+
+        const isSent = message.sender._id === this.currentUser._id;
+        const messageClass = isSent ? 'sent' : 'received';
+        const timestamp = new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        const avatar = message.sender.username.substring(0, 2).toUpperCase();
+        
+        const messageHtml = `
+            <div class="message ${messageClass}">
+                <div class="message-avatar">${avatar}</div>
+                <div class="message-content">
+                    <div class="message-bubble">${this.escapeHtml(message.content)}</div>
+                    <div class="message-meta">
+                        <span class="message-time">${timestamp}</span>
+                        ${isSent ? '<span class="message-status">✓ sent</span>' : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        chatMessages.insertAdjacentHTML('beforeend', messageHtml);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // Handle typing start
+    handleTypingStart() {
         if (this.typingTimeout) {
             clearTimeout(this.typingTimeout);
         }
 
-        const typingIndicator = document.getElementById('typing-indicator');
-        if (typingIndicator && this.currentUser) {
-            typingIndicator.textContent = `${this.currentUser.username} is typing...`;
+        if (this.socket && this.currentRoom) {
+            this.socket.emit('typing', {
+                roomId: this.currentRoom._id,
+                username: this.currentUser.username
+            });
 
             this.typingTimeout = setTimeout(() => {
-                typingIndicator.textContent = '';
+                this.socket.emit('stop-typing', {
+                    roomId: this.currentRoom._id,
+                    username: this.currentUser.username
+                });
             }, 2000);
+        }
+    }
+
+    // Handle typing indicator
+    handleTyping(data) {
+        if (data.username === this.currentUser.username) return;
+        
+        const typingIndicator = document.getElementById('typing-indicator');
+        if (typingIndicator) {
+            typingIndicator.textContent = `${data.username} is typing...`;
+        }
+    }
+
+    // Handle stop typing
+    handleStopTyping(data) {
+        const typingIndicator = document.getElementById('typing-indicator');
+        if (typingIndicator && typingIndicator.textContent.includes(data.username)) {
+            typingIndicator.textContent = '';
+        }
+    }
+
+    // Handle user joined
+    handleUserJoined(data) {
+        this.showToast(`${data.username} joined the room`, 'info');
+        // Refresh participants if we're in the same room
+        if (this.currentRoom && this.currentRoom._id === data.roomId) {
+            this.loadParticipants();
+        }
+    }
+
+    // Handle user left
+    handleUserLeft(data) {
+        this.showToast(`${data.username} left the room`, 'info');
+        // Refresh participants if we're in the same room
+        if (this.currentRoom && this.currentRoom._id === data.roomId) {
+            this.loadParticipants();
         }
     }
 
@@ -815,39 +1232,90 @@ class ChatApp {
             document.execCommand('copy');
             this.showToast('Room link copied to clipboard!', 'success');
         } catch (err) {
+            console.error('Copy failed:', err);
             this.showToast('Failed to copy link', 'error');
         }
     }
 
-    // Start socket simulation
-    startSocketSimulation() {
-        if (this.socketSimulation) {
-            clearInterval(this.socketSimulation);
+    // Update connection status
+    updateConnectionStatus(status) {
+        let statusEl = document.getElementById('connection-status');
+        
+        if (!statusEl) {
+            statusEl = document.createElement('div');
+            statusEl.id = 'connection-status';
+            statusEl.className = 'connection-status';
+            document.body.appendChild(statusEl);
         }
 
-        this.socketSimulation = setInterval(() => {
-            if (Math.random() < 0.1 && this.currentRoom) {
-                const otherUsers = this.currentRoom.participants
-                    .filter(id => id !== this.currentUser.id)
-                    .map(id => this.users.find(u => u.id === id))
-                    .filter(Boolean);
-                
-                if (otherUsers.length > 0) {
-                    const randomUser = otherUsers[Math.floor(Math.random() * otherUsers.length)];
-                    const typingIndicator = document.getElementById('typing-indicator');
-                    
-                    if (typingIndicator && !typingIndicator.textContent.includes('typing')) {
-                        typingIndicator.textContent = `${randomUser.username} is typing...`;
-                        
-                        setTimeout(() => {
-                            if (typingIndicator.textContent.includes(randomUser.username)) {
-                                typingIndicator.textContent = '';
-                            }
-                        }, 3000);
-                    }
-                }
+        statusEl.className = `connection-status ${status}`;
+        
+        switch (status) {
+            case 'connected':
+                statusEl.textContent = '● Connected';
+                break;
+            case 'connecting':
+                statusEl.textContent = '● Connecting...';
+                break;
+            case 'disconnected':
+                statusEl.textContent = '● Disconnected';
+                break;
+        }
+    }
+
+    // API call helper
+    async apiCall(endpoint, method = 'GET', data = null) {
+        const url = `${this.API_BASE}${endpoint}`;
+        const options = {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
             }
-        }, 12000);
+        };
+
+        if (this.authToken) {
+            options.headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+
+        if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+            options.body = JSON.stringify(data);
+        }
+
+        console.log(`API ${method} ${endpoint}`, data || '');
+
+        const response = await fetch(url, options);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `HTTP ${response.status}`;
+            
+            try {
+                const errorJson = JSON.parse(errorText);
+                errorMessage = errorJson.message || errorMessage;
+            } catch (e) {
+                errorMessage = errorText || errorMessage;
+            }
+            
+            throw new Error(errorMessage);
+        }
+
+        const result = await response.json();
+        return result;
+    }
+
+    // Token management
+    storeToken(token) {
+        // In a real app, use httpOnly cookies for security
+        // For demo purposes, using sessionStorage
+        sessionStorage.setItem('chatflow_token', token);
+    }
+
+    getStoredToken() {
+        return sessionStorage.getItem('chatflow_token');
+    }
+
+    clearStoredToken() {
+        sessionStorage.removeItem('chatflow_token');
     }
 
     // Utility functions
@@ -865,6 +1333,23 @@ class ChatApp {
     hideLoading() {
         const loading = document.getElementById('loading');
         if (loading) loading.classList.add('hidden');
+    }
+
+    showError(elementId, message) {
+        console.log('Showing error:', elementId, message);
+        const errorEl = document.getElementById(elementId);
+        if (errorEl) {
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+    }
+
+    hideError(elementId) {
+        const errorEl = document.getElementById(elementId);
+        if (errorEl) {
+            errorEl.classList.add('hidden');
+            errorEl.textContent = '';
+        }
     }
 
     showToast(message, type = 'info') {
@@ -897,6 +1382,6 @@ class ChatApp {
 }
 
 // Initialize app
-console.log('Creating ChatApp instance...');
+console.log('Creating ChatApp instance with real backend integration...');
 const chatApp = new ChatApp();
 window.chatApp = chatApp;

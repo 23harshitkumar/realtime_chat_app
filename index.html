@@ -34,7 +34,7 @@
                                 <input type="password" id="login-password" class="form-control" required>
                             </div>
                             <button type="submit" class="btn btn--primary btn--full-width">Login</button>
-                            <p class="auth-hint">Try: john@example.com</p>
+                            <div id="login-error" class="error-message hidden"></div>
                         </form>
 
                         <!-- Register Form -->
@@ -52,6 +52,7 @@
                                 <input type="password" id="register-password" class="form-control" required>
                             </div>
                             <button type="submit" class="btn btn--primary btn--full-width">Register</button>
+                            <div id="register-error" class="error-message hidden"></div>
                         </form>
                     </div>
                 </div>
@@ -80,7 +81,9 @@
                                     <h2>Your Rooms</h2>
                                     <button id="create-room-btn" class="btn btn--primary">Create Room</button>
                                 </div>
-                                <div id="rooms-list" class="rooms-grid"></div>
+                                <div id="rooms-list" class="rooms-grid">
+                                    <div class="loading-placeholder">Loading rooms...</div>
+                                </div>
                             </div>
                         </div>
                     </main>
@@ -113,7 +116,9 @@
                     </div>
 
                     <div class="chat-main">
-                        <div class="chat-messages" id="chat-messages"></div>
+                        <div class="chat-messages" id="chat-messages">
+                            <div class="loading-placeholder">Loading messages...</div>
+                        </div>
                         <div class="typing-indicator" id="typing-indicator"></div>
                         <div class="chat-input-container">
                             <div class="chat-input-wrapper">
@@ -147,6 +152,45 @@
             </div>
         </div>
 
+        <!-- Room Permission Request Modal -->
+        <div id="permission-request-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Room Access Request</h3>
+                </div>
+                <div class="modal-body">
+                    <p><strong id="requester-name"></strong> wants to join "<strong id="request-room-name"></strong>"</p>
+                    <div class="modal-footer">
+                        <button type="button" id="reject-request" class="btn btn--outline">Reject</button>
+                        <button type="button" id="approve-request" class="btn btn--primary">Approve</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Join Room Modal -->
+        <div id="join-room-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Join Room</h3>
+                </div>
+                <div class="modal-body">
+                    <div id="join-room-content">
+                        <p>You need permission to join "<strong id="join-room-name"></strong>"</p>
+                        <p>A request has been sent to the room owner.</p>
+                        <div class="status-indicator" id="request-status">
+                            <div class="status status--info">Waiting for approval...</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" id="cancel-join" class="btn btn--outline">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Loading Spinner -->
         <div id="loading" class="loading hidden">
             <div class="loading-spinner"></div>
@@ -154,8 +198,23 @@
 
         <!-- Toast Notifications -->
         <div id="toast-container" class="toast-container"></div>
+
+        <!-- Permission Notification -->
+        <div id="permission-notification" class="permission-notification hidden">
+            <div class="notification-content">
+                <div class="notification-text">
+                    <strong id="notification-requester"></strong> wants to join your room
+                </div>
+                <div class="notification-actions">
+                    <button id="quick-approve" class="btn btn--primary btn--sm">Approve</button>
+                    <button id="quick-reject" class="btn btn--outline btn--sm">Reject</button>
+                </div>
+            </div>
+        </div>
     </div>
 
+    <!-- Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
