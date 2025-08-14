@@ -4,6 +4,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
@@ -22,6 +23,12 @@ const io = socketIo(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve static files (HTML, CSS, JS)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -29,7 +36,7 @@ app.use('/api/rooms', roomRoutes);
 app.use('/api/messages', messageRoutes);
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/chatflow', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
@@ -40,20 +47,54 @@ mongoose.connect(process.env.MONGODB_URI, {
 const RoomRequest = require('./models/RoomRequest');
 const Room = require('./models/Room');
 const Message = require('./models/Message');
+const User = require('./models/User');
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   // User joins room after approval
   socket.on('join-room', async (data) => {
-    const { roomId, userId, username } = data;
-    socket.join(roomId);
-    
-    // Notify others in room
-    socket.to(roomId).emit('user-joined', {
-      username,
-      message: `${username} joined the room`
-    });
+    try {
+      const { roomId, userId, username } = data;
+      
+      // Verify room exists and user has access
+      const room = await Room.findById(roomId);
+      if (!room) {
+        socket.emit('room-error', { message: 'Room not found' });
+        return;
+      }
+
+      // Check if user is a participant or if room is public
+      const hasAccess = room.participants.includes(userId) || !room.isPrivate;
+      if (!hasAccess) {
+        socket.emit('room-error', { message: 'Access denied to this room' });
+        return;
+      }
+
+      socket.join(roomId);
+      
+      // Notify others in room
+      socket.to(roomId).emit('user-joined', {
+        username,
+        message: `${username} joined the room`,
+        timestamp: new Date()
+      });
+
+      // Send room info and recent messages to the joining user
+      const messages = await Message.find({ roomId })
+        .populate('userId', 'username')
+        .sort({ createdAt: -1 })
+        .limit(50);
+
+      socket.emit('room-joined', {
+        room,
+        messages: messages.reverse()
+      });
+
+    } catch (error) {
+      console.error('Join room error:', error);
+      socket.emit('room-error', { message: 'Failed to join room' });
+    }
   });
 
   // Request room access (FIX FOR YOUR ISSUE)
@@ -176,6 +217,19 @@ io.on('connection', (socket) => {
     try {
       const { roomId, userId, username, text } = data;
       
+      // Verify room access
+      const room = await Room.findById(roomId);
+      if (!room) {
+        socket.emit('message-error', { message: 'Room not found' });
+        return;
+      }
+
+      const hasAccess = room.participants.includes(userId) || !room.isPrivate;
+      if (!hasAccess) {
+        socket.emit('message-error', { message: 'Access denied to this room' });
+        return;
+      }
+
       const message = new Message({
         roomId,
         userId,
@@ -204,6 +258,7 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Send message error:', error);
+      socket.emit('message-error', { message: 'Failed to send message' });
     }
   });
 
